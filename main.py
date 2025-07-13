@@ -3,13 +3,24 @@ from pose.pose_estimation import PoseEstimation
 from tools.wifi_connect import connect_wifi
 from tools.video_record import VideoRecorder
 from tools.time_utils import get_timestamp_str
+from tools import web_server
 
 import numpy as np
 import os
 
+# Wi-Fi Setup
 SSID = "MaixCAM-Wifi"
 PASSWORD = "maixcamwifi"
-connect_wifi(SSID, PASSWORD)
+server_ip = connect_wifi(SSID, PASSWORD)
+
+# Web Server Setup
+web_server.start_servers()
+print("\nServer started. Connect to MaixCAM in your browser:")
+print(f"   → http://{server_ip}:80/   (Live stream UI)")
+print(f"   → ws://{server_ip}:8765/   (WebSocket commands)\n")
+
+# Ensure static dir exist
+os.makedirs("/root/static", exist_ok=True)
 
 detector = nn.YOLO11(model="/root/models/yolo11n_pose.mud", dual_buff=False)
 cam = camera.Camera(detector.input_width(), detector.input_height(), detector.input_format(), fps=60)
@@ -42,7 +53,17 @@ def to_keypoints_np(obj_points):
 
 # === Main loop ===
 while not app.need_exit():
-    img = cam.read()
+    raw_img = cam.read()
+    flags = web_server.get_control_flags()
+
+    if flags["show_raw"]:
+        img = raw_img.copy()
+    else:
+        if os.path.exists("/root/static/background.jpg"):
+            img = image.Image("/root/static/background.jpg").copy()
+        else:
+            img = raw_img.copy()  # fallback
+
     objs = detector.detect(img, conf_th=0.5, iou_th=0.45, keypoint_th=0.5)
     for obj in objs:
         msg = f'[{obj.score:.2f}], {pose_estimator.evaluate_pose(to_keypoints_np(obj.points))}'
@@ -51,8 +72,21 @@ while not app.need_exit():
 
     recorder.add_frame(img)
     disp.show(img)
+    
+    web_server.send_frame(img)
 
-    # 🔁 Rotate recording every 10 seconds
+    flags = web_server.get_control_flags()
+    if flags["record"] and not recorder.is_active:
+        last_rotate_ms = start_new_recording()
+    elif not flags["record"] and recorder.is_active:
+        recorder.end()
+
+    if flags["set_background"]:
+        img.save("/root/static/background.jpg")
+        web_server.reset_set_background_flag()
+
+
+    # Rotate recording every 10 seconds
     now = time.ticks_ms()
     if now - last_rotate_ms >= record_period:
         recorder.end()

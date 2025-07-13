@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MaixCAM Stream</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>📹 MaixCAM Live Stream</h1>
+
+  <div>
+    <label><input type="checkbox" id="toggleRecord" checked> Record + Stream</label>
+    <label><input type="checkbox" id="toggleRaw" checked> Show Raw Video</label>
+    <button id="setBackgroundBtn">📸 Set Current Frame as Background</button>
+  </div>
+
+  <img id="stream" src="/stream.mjpg" alt="Live Stream" />
+
+  <div id="popup">
+    <h3>Set this frame as background?</h3>
+    <img id="preview" src="">
+    <br/>
+    <button onclick="confirmBackground()">Yes</button>
+    <button onclick="hidePopup()">Cancel</button>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

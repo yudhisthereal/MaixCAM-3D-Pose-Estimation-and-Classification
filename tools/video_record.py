@@ -6,6 +6,7 @@ class VideoRecorder:
         self.filename = None
         self.width = None
         self.height = None
+        self.is_active = False
 
     def start(self, filename, width, height):
         """
@@ -15,6 +16,7 @@ class VideoRecorder:
         self.width = width
         self.height = height
         self.encoder = video.Encoder(filename, width, height)
+        self.is_active = True
 
     def add_frame(self, img):
         """
@@ -39,3 +41,4 @@ class VideoRecorder:
             self.filename = None
             self.width = None
             self.height = None
+            self.is_active = False
