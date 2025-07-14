@@ -1,3 +1,5 @@
+// script.js
+
 const streamImg = document.getElementById('stream');
 const popup = document.getElementById('popup');
 const preview = document.getElementById('preview');
@@ -5,36 +7,40 @@ const toggleRecord = document.getElementById('toggleRecord');
 const toggleRaw = document.getElementById('toggleRaw');
 const setBackgroundBtn = document.getElementById('setBackgroundBtn');
 
-const ws = new WebSocket("ws://" + location.hostname + ":8765");
+// === 🔁 Send command using HTTP POST instead of WebSocket
+function sendCommand(command, value = null) {
+    fetch("/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command, value }),
+    }).catch((err) => {
+        console.error("Command failed:", err);
+    });
+}
 
+// === ⬛ Event handlers
 toggleRecord.onchange = () => {
-  ws.send(JSON.stringify({
-    command: "toggle_record",
-    value: toggleRecord.checked
-  }));
+    sendCommand("toggle_record", toggleRecord.checked);
 };
 
 toggleRaw.onchange = () => {
-  ws.send(JSON.stringify({
-    command: "toggle_raw",
-    value: toggleRaw.checked
-  }));
+    sendCommand("toggle_raw", toggleRaw.checked);
 };
 
 setBackgroundBtn.onclick = () => {
-  preview.src = streamImg.src + '&_=' + Date.now(); // force refresh
-  popup.style.display = "block";
+    preview.src = "/snapshot.jpg?_=" + Date.now();
+    popup.style.display = "block";
 };
 
-function hidePopup() {
-  popup.style.display = "none";
-}
-
 function confirmBackground() {
-  ws.send(JSON.stringify({ command: "set_background" }));
-  hidePopup();
+    sendCommand("set_background");
+    hidePopup();
 }
 
-// Attach to buttons inside popup
+function hidePopup() {
+    popup.style.display = "none";
+}
+
+// Expose for inline onclick
 window.confirmBackground = confirmBackground;
 window.hidePopup = hidePopup;

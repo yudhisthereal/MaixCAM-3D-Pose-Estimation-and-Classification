@@ -4,9 +4,13 @@ from tools.wifi_connect import connect_wifi
 from tools.video_record import VideoRecorder
 from tools.time_utils import get_timestamp_str
 from tools import web_server
+from tools.web_server import WS_PORT, HTTP_PORT
 
 import numpy as np
 import os
+
+# Image Paths
+BACKGROUND_PATH = "/root/static/background.jpg"
 
 # Wi-Fi Setup
 SSID = "MaixCAM-Wifi"
@@ -16,8 +20,7 @@ server_ip = connect_wifi(SSID, PASSWORD)
 # Web Server Setup
 web_server.start_servers()
 print("\nServer started. Connect to MaixCAM in your browser:")
-print(f"   → http://{server_ip}:80/   (Live stream UI)")
-print(f"   → ws://{server_ip}:8765/   (WebSocket commands)\n")
+print(f"   → http://{server_ip}:{HTTP_PORT}/")
 
 # Ensure static dir exist
 os.makedirs("/root/static", exist_ok=True)
@@ -59,18 +62,19 @@ while not app.need_exit():
     if flags["show_raw"]:
         img = raw_img.copy()
     else:
-        if os.path.exists("/root/static/background.jpg"):
-            img = image.Image("/root/static/background.jpg").copy()
+        if os.path.exists(BACKGROUND_PATH):
+            img = image.load(BACKGROUND_PATH, format=image.Format.FMT_RGB888)
         else:
             img = raw_img.copy()  # fallback
 
-    objs = detector.detect(img, conf_th=0.5, iou_th=0.45, keypoint_th=0.5)
+    objs = detector.detect(raw_img, conf_th=0.5, iou_th=0.45, keypoint_th=0.5)
     for obj in objs:
         msg = f'[{obj.score:.2f}], {pose_estimator.evaluate_pose(to_keypoints_np(obj.points))}'
         img.draw_string(obj.x, obj.y, msg, color=image.COLOR_RED, scale=0.5)
         detector.draw_pose(img, obj.points, 8 if detector.input_width() > 480 else 4, image.COLOR_RED)
 
-    recorder.add_frame(img)
+    if recorder.is_active:
+        recorder.add_frame(img)
     disp.show(img)
     
     web_server.send_frame(img)
@@ -82,7 +86,7 @@ while not app.need_exit():
         recorder.end()
 
     if flags["set_background"]:
-        img.save("/root/static/background.jpg")
+        web_server.confirm_background(BACKGROUND_PATH)
         web_server.reset_set_background_flag()
 
 

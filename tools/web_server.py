@@ -10,6 +10,7 @@ from maix import image
 
 # === Shared State ===
 latest_jpeg = None  # updated externally by main.py
+img_snapshot = None # will be used by main.py to update static bg
 clients = set()     # active MJPEG streaming clients
 control_flags = {
     "record": True,
@@ -19,13 +20,14 @@ control_flags = {
 
 # === Config ===
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "../static")
+STREAM_JPG_PATH = "/tmp/stream_frame.jpg"
 HTTP_PORT = 80
-WS_PORT = 8765
+WS_PORT = 8081
 
 
 # === HTTP Server Thread ===
 def handle_http(conn, addr):
-    global latest_jpeg
+    global latest_jpeg, img_snapshot
     try:
         request = conn.recv(1024).decode("utf-8")
         if not request:
@@ -44,6 +46,27 @@ def handle_http(conn, addr):
             mime = "text/css"
         elif path == "/stream.mjpg":
             stream_mjpeg(conn)
+            return
+        elif path.startswith("/snapshot.jpg"):
+            if latest_jpeg:
+                img_snapshot = image.load(STREAM_JPG_PATH, format = image.Format.FMT_RGBA8888)
+                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\n\r\n")
+                conn.send(latest_jpeg)
+            else:
+                conn.send(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
+            conn.close()
+            return
+        elif path == "/command":
+            try:
+                header, body = request.split("\r\n\r\n", 1)
+                print("[Command] Body:", body)
+                msg = json.loads(body)
+                handle_command(msg)
+                conn.send(b"HTTP/1.1 200 OK\r\n\r\n")
+            except Exception as e:
+                print("Command error:", e)
+                conn.send(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+            conn.close()
             return
         else:
             conn.send(b"HTTP/1.1 404 Not Found\r\n\r\n")
@@ -78,24 +101,28 @@ def stream_mjpeg(conn):
         clients.discard(conn)
         conn.close()
 
+def confirm_background(path):
+    global img_snapshot
+    img_snapshot.save(path)
+    img_snapshot = None
 
 # === WebSocket-like Control Server ===
-def handle_ws(conn, addr):
-    try:
-        while True:
-            data = conn.recv(1024)
-            if not data:
-                break
-            try:
-                msg = json.loads(data.decode("utf-8"))
-                print("Received command:", msg)
-                handle_command(msg)
-            except Exception as e:
-                print("Bad WS message:", e)
-    except:
-        pass
-    finally:
-        conn.close()
+# def handle_ws(conn, addr):
+#     try:
+#         while True:
+#             data = conn.recv(1024)
+#             if not data:
+#                 break
+#             try:
+#                 msg = json.loads(data.decode("utf-8"))
+#                 print("Received command:", msg)
+#                 handle_command(msg)
+#             except Exception as e:
+#                 print("Bad WS message:", e)
+#     except:
+#         pass
+#     finally:
+#         conn.close()
 
 
 def handle_command(msg):
@@ -114,9 +141,8 @@ def send_frame(img):
     global latest_jpeg
 
     try:
-        temp_path = "/tmp/stream_frame.jpg"
-        img.save(temp_path, quality=80)
-        with open(temp_path, "rb") as f:
+        img.save(STREAM_JPG_PATH, quality=80)
+        with open(STREAM_JPG_PATH, "rb") as f:
             latest_jpeg = f.read()
     except Exception as e:
         print("Error saving JPEG for stream:", e)
@@ -144,16 +170,16 @@ def start_servers():
             conn, addr = sk.accept()
             threading.Thread(target=handle_http, args=(conn, addr), daemon=True).start()
 
-    # WebSocket-like Server
-    def ws_loop():
-        sk = socket.socket()
-        sk.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sk.bind(("0.0.0.0", WS_PORT))
-        sk.listen(2)
-        print(f"[WebSocket] Listening on port {WS_PORT}")
-        while True:
-            conn, addr = sk.accept()
-            threading.Thread(target=handle_ws, args=(conn, addr), daemon=True).start()
+    # # WebSocket-like Server
+    # def ws_loop():
+    #     sk = socket.socket()
+    #     sk.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    #     sk.bind(("0.0.0.0", WS_PORT))
+    #     sk.listen(2)
+    #     print(f"[WebSocket] Listening on port {WS_PORT}")
+    #     while True:
+    #         conn, addr = sk.accept()
+    #         threading.Thread(target=handle_ws, args=(conn, addr), daemon=True).start()
 
     threading.Thread(target=http_loop, daemon=True).start()
-    threading.Thread(target=ws_loop, daemon=True).start()
+    # threading.Thread(target=ws_loop, daemon=True).start()
