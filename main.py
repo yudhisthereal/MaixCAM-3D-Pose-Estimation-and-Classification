@@ -1,13 +1,16 @@
-from maix import camera, display, app, nn, image, time
+from maix import camera, display, app, nn, image, time, tracker
 from pose.pose_estimation import PoseEstimation
 from tools.wifi_connect import connect_wifi
 from tools.video_record import VideoRecorder
 from tools.time_utils import get_timestamp_str
 from tools import web_server
 from tools.web_server import WS_PORT, HTTP_PORT
+from pose.judge_fall import get_fall_info
+import queue
 
 import numpy as np
 import os
+import queue
 
 # Image Paths
 BACKGROUND_PATH = "/root/static/background.jpg"
@@ -54,6 +57,32 @@ def to_keypoints_np(obj_points):
     keypoints = np.array(obj_points)
     return keypoints.reshape((-1, 2))
 
+# Tracker and fall detection setup
+fallParam = {
+    "v_bbox_y": 0.1,
+    "angle": 70
+}
+fps = 25
+queue_size = 5
+
+online_targets = {
+    "id": [],
+    "bbox": [],
+    "points": []
+}
+
+fall_down = False
+fall_ids = set()
+
+tracker0 = tracker.ByteTracker(max_lost_buff_time=30, track_thresh=0.4, high_thresh=0.6, match_thresh=0.8, max_history_num=5)
+
+def yolo_objs_to_tracker_objs(objs, valid_class_id=[0]):
+    out = []
+    for obj in objs:
+        if obj.class_id in valid_class_id:
+            out.append(tracker.Object(obj.x, obj.y, obj.w, obj.h, obj.class_id, obj.score))
+    return out
+
 # === Main loop ===
 while not app.need_exit():
     raw_img = cam.read()
@@ -68,10 +97,49 @@ while not app.need_exit():
             img = raw_img.copy()  # fallback
 
     objs = detector.detect(raw_img, conf_th=0.5, iou_th=0.45, keypoint_th=0.5)
-    for obj in objs:
-        msg = f'[{obj.score:.2f}], {pose_estimator.evaluate_pose(to_keypoints_np(obj.points))}'
-        img.draw_string(obj.x, obj.y, msg, color=image.COLOR_RED, scale=0.5)
-        detector.draw_pose(img, obj.points, 8 if detector.input_width() > 480 else 4, image.COLOR_RED)
+    out_bbox = yolo_objs_to_tracker_objs(objs)
+    tracks = tracker0.update(out_bbox)
+
+    for track in tracks:
+        if track.lost:
+            continue
+        for obj in objs:
+            if abs(obj.x - track.x) < 10 and abs(obj.y - track.y) < 10:
+                keypoints_np = to_keypoints_np(obj.points)
+
+                # Assign ID
+                if track.id not in online_targets["id"]:
+                    online_targets["id"].append(track.id)
+                    online_targets["bbox"].append(queue.Queue(maxsize=queue_size))
+                    online_targets["points"].append(queue.Queue(maxsize=queue_size))
+
+                idx = online_targets["id"].index(track.id)
+
+                # Add bbox and points to queue
+                if online_targets["bbox"][idx].qsize() >= queue_size:
+                    online_targets["bbox"][idx].get()
+                    online_targets["points"][idx].get()
+                online_targets["bbox"][idx].put([track.x, track.y, track.w, track.h])
+                online_targets["points"][idx].put(obj.points)
+
+                # Call fall detection when queue is full
+                if online_targets["bbox"][idx].qsize() == queue_size:
+                    if get_fall_info(obj, track, online_targets, idx, fallParam, queue_size, fps):
+                        fall_ids.add(track.id)
+
+                # Draw
+                status_str = pose_estimator.evaluate_pose(keypoints_np)
+                if track.id in fall_ids:
+                    msg = f"[{track.id}] FALL"
+                    color = image.COLOR_RED
+                else:
+                    msg = f"[{track.id}] {status_str}"
+                    color = image.COLOR_GREEN
+
+                img.draw_string(int(track.x), int(track.y), msg, color=color, scale=0.5)
+                detector.draw_pose(img, obj.points, 8 if detector.input_width() > 480 else 4, color=color)
+                break  # no need to check other objs
+
 
     if recorder.is_active:
         recorder.add_frame(img)

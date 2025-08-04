@@ -106,24 +106,6 @@ def confirm_background(path):
     img_snapshot.save(path)
     img_snapshot = None
 
-# === WebSocket-like Control Server ===
-# def handle_ws(conn, addr):
-#     try:
-#         while True:
-#             data = conn.recv(1024)
-#             if not data:
-#                 break
-#             try:
-#                 msg = json.loads(data.decode("utf-8"))
-#                 print("Received command:", msg)
-#                 handle_command(msg)
-#             except Exception as e:
-#                 print("Bad WS message:", e)
-#     except:
-#         pass
-#     finally:
-#         conn.close()
-
 
 def handle_command(msg):
     cmd = msg.get("command")
@@ -170,16 +152,4 @@ def start_servers():
             conn, addr = sk.accept()
             threading.Thread(target=handle_http, args=(conn, addr), daemon=True).start()
 
-    # # WebSocket-like Server
-    # def ws_loop():
-    #     sk = socket.socket()
-    #     sk.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    #     sk.bind(("0.0.0.0", WS_PORT))
-    #     sk.listen(2)
-    #     print(f"[WebSocket] Listening on port {WS_PORT}")
-    #     while True:
-    #         conn, addr = sk.accept()
-    #         threading.Thread(target=handle_ws, args=(conn, addr), daemon=True).start()
-
     threading.Thread(target=http_loop, daemon=True).start()
-    # threading.Thread(target=ws_loop, daemon=True).start()
