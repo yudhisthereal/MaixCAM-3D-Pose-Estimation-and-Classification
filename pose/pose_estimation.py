@@ -87,7 +87,7 @@ class PoseEstimation:
             label = "standing"
         elif torso_angle < 30 and thigh_uprightness >= 40:
             label = "sitting"
-        elif 30 <= torso_angle < 80 and thigh_uprightness < 70:
+        elif 30 <= torso_angle < 80 and thigh_uprightness < 60:
             label = "bending_down"
         else:
             label = "lying_down"
