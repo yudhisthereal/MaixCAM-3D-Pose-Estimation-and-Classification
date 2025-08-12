@@ -28,7 +28,7 @@ print(f"   → http://{server_ip}:{web_server.HTTP_PORT}/")
 # Ensure static dir exist
 os.makedirs("/root/static", exist_ok=True)
 
-detector = nn.YOLO11(model="/root/models/yolo11n_pose.mud", dual_buff=False)
+detector = nn.YOLO11(model="/root/models/yolo11n_pose.mud", dual_buff=True)
 cam = camera.Camera(detector.input_width(), detector.input_height(), detector.input_format(), fps=60)
 disp = display.Display()
 
