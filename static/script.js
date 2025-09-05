@@ -27,6 +27,10 @@ toggleRaw.onchange = () => {
     sendCommand("toggle_raw", toggleRaw.checked);
 };
 
+autoUpdateBg.onchange = () => {
+    sendCommand("auto_update_bg", autoUpdateBg.checked);
+};
+
 setBackgroundBtn.onclick = () => {
     preview.src = "/snapshot.jpg?_=" + Date.now();
     popup.style.display = "block";

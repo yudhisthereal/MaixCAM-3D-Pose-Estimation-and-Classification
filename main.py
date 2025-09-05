@@ -14,10 +14,8 @@ import os
 BACKGROUND_PATH = "/root/static/background.jpg"
 
 # Wi-Fi Setup
-# SSID = "MaixCAM-Wifi"
-# PASSWORD = "maixcamwifi"
-SSID = "ROBOTIIK"
-PASSWORD = "81895656"
+SSID = "GEREJA AL-IKHLAS (UMI MARIA)"
+PASSWORD = "susugedhe"
 server_ip = connect_wifi(SSID, PASSWORD)
 
 # Web Server Setup
@@ -28,7 +26,10 @@ print(f"   → http://{server_ip}:{web_server.HTTP_PORT}/")
 # Ensure static dir exist
 os.makedirs("/root/static", exist_ok=True)
 
+# Initialize detectors
 detector = nn.YOLO11(model="/root/models/yolo11n_pose.mud", dual_buff=True)
+segmentor = nn.YOLO11(model="/root/models/yolo11n_seg.mud", dual_buff=True)
+
 cam = camera.Camera(detector.input_width(), detector.input_height(), detector.input_format(), fps=60)
 disp = display.Display()
 
@@ -38,13 +39,24 @@ image.load_font("sourcehansans", "/maixapp/share/font/SourceHanSansCN-Regular.ot
 image.set_default_font("sourcehansans")
 
 # Skeleton Saver and Recorder setup
-record_period = 10000 # 10 seconds
+record_period = 10000  # 10 seconds
 video_dir = "/root/recordings"
 os.makedirs(video_dir, exist_ok=True)
 
 recorder = VideoRecorder()
 skeleton_saver_2d = SkeletonSaver2D()
-frame_id = 0 # the frame ID of the current recording (resets every time a new recording is started)
+frame_id = 0  # the frame ID of the current recording (resets every time a new recording is started)
+
+# Background update settings
+UPDATE_INTERVAL_MS = 10000  # 10 seconds
+NO_HUMAN_CONFIRM_FRAMES = 5
+STEP = 8  # Step size for background update
+
+# Background state variables
+background_img = None
+prev_human_present = False
+no_human_counter = 0
+last_update_ms = time.ticks_ms()
 
 def start_new_recording():
     global frame_id
@@ -63,6 +75,34 @@ last_rotate_ms = start_new_recording()
 def to_keypoints_np(obj_points):
     keypoints = np.array(obj_points)
     return keypoints.reshape(-1, 2)
+
+# Background update functions
+def rects_overlap(x1, y1, w1, h1, x2, y2, w2, h2):
+    return not (x1 + w1 <= x2 or x2 + w2 <= x1 or y1 + h1 <= y2 or y2 + h2 <= y1)
+
+def update_background(bg, current, objs):
+    width, height = current.width(), current.height()
+    human_boxes = []
+    
+    for obj in objs:
+        if segmentor.labels[obj.class_id] in ["person", "human"]:
+            human_boxes.append((obj.x, obj.y, obj.w, obj.h))
+
+    for y in range(0, height, STEP):
+        for x in range(0, width, STEP):
+            overlaps = False
+            for bx, by, bw, bh in human_boxes:
+                if rects_overlap(x, y, STEP, STEP, bx, by, bw, bh):
+                    overlaps = True
+                    break
+
+            if not overlaps:
+                w = min(STEP, width - x)
+                h = min(STEP, height - y)
+                region = current.crop(x, y, w, h)
+                bg.draw_image(x, y, region)
+
+    return bg
 
 # Tracker and fall detection setup
 fallParam = {
@@ -97,19 +137,65 @@ def yolo_objs_to_tracker_objs(objs, valid_class_id=[0]):
             out.append(tracker.Object(obj.x, obj.y, obj.w, obj.h, obj.class_id, obj.score))
     return out
 
+# Initialize background
+if os.path.exists(BACKGROUND_PATH):
+    background_img = image.load(BACKGROUND_PATH, format=image.Format.FMT_RGB888)
+else:
+    # Capture initial background
+    background_img = cam.read().copy()
+    background_img.save(BACKGROUND_PATH)
+
 # === Main loop ===
 while not app.need_exit():
     raw_img = cam.read()
     flags = web_server.get_control_flags()
 
+    # Run segmentation for background updates
+    objs_seg = segmentor.detect(raw_img, conf_th=0.5, iou_th=0.45)
+    current_human_present = any(segmentor.labels[obj.class_id] in ["person", "human"] for obj in objs_seg)
+    bg_updated = False
+
+    # Background update logic - only if auto_update_bg is enabled
+    print(flags["auto_update_bg"])
+    if flags["auto_update_bg"]:
+        if prev_human_present and not current_human_present:
+            no_human_counter += 1
+            if no_human_counter >= NO_HUMAN_CONFIRM_FRAMES:
+                print("Confirmed human absence for 5 frames — updating background.")
+                background_img = raw_img.copy()
+                background_img.save(BACKGROUND_PATH)
+                last_update_ms = time.ticks_ms()
+                no_human_counter = 0
+                bg_updated = True
+        else:
+            no_human_counter = 0
+            if time.ticks_ms() - last_update_ms > UPDATE_INTERVAL_MS:
+                background_img = update_background(background_img, raw_img, objs_seg)
+                background_img.save(BACKGROUND_PATH)
+                last_update_ms = time.ticks_ms()
+                bg_updated = True
+
+        prev_human_present = current_human_present
+
+        if time.ticks_ms() - last_update_ms > UPDATE_INTERVAL_MS and not bg_updated:
+            background_img = update_background(background_img, raw_img, objs_seg)
+            background_img.save(BACKGROUND_PATH)
+            last_update_ms = time.ticks_ms()
+    else:
+        # Reset counters when auto-update is disabled
+        no_human_counter = 0
+        prev_human_present = current_human_present
+
+    # Prepare display image
     if flags["show_raw"]:
         img = raw_img.copy()
     else:
-        if os.path.exists(BACKGROUND_PATH):
-            img = image.load(BACKGROUND_PATH, format=image.Format.FMT_RGB888)
+        if background_img is not None:
+            img = background_img.copy()
         else:
             img = raw_img.copy()  # fallback
 
+    # Pose detection and tracking
     objs = detector.detect(raw_img, conf_th=0.5, iou_th=0.45, keypoint_th=0.5)
     out_bbox = yolo_objs_to_tracker_objs(objs)
     tracks = tracker0.update(out_bbox)
@@ -162,7 +248,6 @@ while not app.need_exit():
                     
                     break  # no need to check other objs
 
-
     if recorder.is_active:
         recorder.add_frame(img)
     disp.show(img)
@@ -179,17 +264,15 @@ while not app.need_exit():
         web_server.confirm_background(BACKGROUND_PATH)
         web_server.reset_set_background_flag()
 
-
     # Rotate recording every 10 seconds
     now = time.ticks_ms()
-    if now - last_rotate_ms >= record_period:
+    if now - last_rotate_ms >= record_period and flags["record"] and recorder.is_active:
         # Save vid recording and skeleton csv
         recorder.end()
         skeleton_saver_2d.save_to_csv()
         
         # Start new rec
         last_rotate_ms = start_new_recording()
-
 
 # Final cleanup
 recorder.end()

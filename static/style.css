@@ -61,3 +61,12 @@ video {
     max-width: 100%;
     margin-bottom: 20px;
 }
+
+#stream {
+    width: 80vw;
+    height: 80vh;
+    object-fit: contain; /* or cover */
+    display: block;
+    margin: 0 auto;
+    padding: 0;
+}

@@ -14,8 +14,9 @@ img_snapshot = None # will be used by main.py to update static bg
 clients = set()     # active MJPEG streaming clients
 control_flags = {
     "record": True,
-    "show_raw": True,
+    "show_raw": False,
     "set_background": False,
+    "auto_update_bg": True
 }
 
 # === Config ===
@@ -114,6 +115,8 @@ def handle_command(msg):
         control_flags["record"] = bool(val)
     elif cmd == "toggle_raw":
         control_flags["show_raw"] = bool(val)
+    elif cmd == "auto_update_bg":
+        control_flags["auto_update_bg"] = bool(val)
     elif cmd == "set_background":
         control_flags["set_background"] = True
 
