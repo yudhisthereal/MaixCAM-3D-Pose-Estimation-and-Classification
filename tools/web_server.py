@@ -13,7 +13,7 @@ latest_jpeg = None  # updated externally by main.py
 img_snapshot = None # will be used by main.py to update static bg
 clients = set()     # active MJPEG streaming clients
 control_flags = {
-    "record": True,
+    "record": False,
     "show_raw": False,
     "set_background": False,
     "auto_update_bg": True

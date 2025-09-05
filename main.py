@@ -14,8 +14,8 @@ import os
 BACKGROUND_PATH = "/root/static/background.jpg"
 
 # Wi-Fi Setup
-SSID = "GEREJA AL-IKHLAS (UMI MARIA)"
-PASSWORD = "susugedhe"
+SSID = "ROBOTIIK"
+PASSWORD = "81895656"
 server_ip = connect_wifi(SSID, PASSWORD)
 
 # Web Server Setup
@@ -58,7 +58,7 @@ is_recording = False
 
 # Background update settings
 UPDATE_INTERVAL_MS = 10000  # 10 seconds
-NO_HUMAN_CONFIRM_FRAMES = 5
+NO_HUMAN_CONFIRM_FRAMES = 10
 STEP = 8  # Step size for background update
 
 # Background state variables
