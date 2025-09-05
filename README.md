@@ -1,4 +1,4 @@
-# Human Pose Monitoring System for MaixCAM
+# Private Human Pose Monitoring System for MaixCAM
 
 ## 📋 Overview
 
