@@ -39,13 +39,22 @@ image.load_font("sourcehansans", "/maixapp/share/font/SourceHanSansCN-Regular.ot
 image.set_default_font("sourcehansans")
 
 # Skeleton Saver and Recorder setup
-record_period = 10000  # 10 seconds
 video_dir = "/root/recordings"
 os.makedirs(video_dir, exist_ok=True)
 
 recorder = VideoRecorder()
 skeleton_saver_2d = SkeletonSaver2D()
-frame_id = 0  # the frame ID of the current recording (resets every time a new recording is started)
+frame_id = 0  # the frame ID of the current recording
+
+# Recording parameters
+MIN_HUMAN_FRAMES_TO_START = 3  # Start recording after 3 frames with human presence
+NO_HUMAN_FRAMES_TO_STOP = 30   # Stop recording after 30 frames without human presence
+MAX_RECORDING_DURATION_MS = 90000  # 90 seconds max recording duration
+
+# Recording state variables
+human_presence_history = []  # Track human presence for last few frames
+recording_start_time = 0
+is_recording = False
 
 # Background update settings
 UPDATE_INTERVAL_MS = 10000  # 10 seconds
@@ -59,18 +68,27 @@ no_human_counter = 0
 last_update_ms = time.ticks_ms()
 
 def start_new_recording():
-    global frame_id
+    global frame_id, recording_start_time, is_recording
     
     timestamp = get_timestamp_str()
     video_path = os.path.join(video_dir, f"{timestamp}.mp4")
     recorder.start(video_path, detector.input_width(), detector.input_height())
     skeleton_saver_2d.start_new_log(timestamp)
     frame_id = 0
+    recording_start_time = time.ticks_ms()
+    is_recording = True
     
-    return time.ticks_ms()
+    print(f"Started recording: {timestamp}")
+    return recording_start_time
 
-# Start first recording
-last_rotate_ms = start_new_recording()
+def stop_recording():
+    global is_recording
+    
+    if recorder.is_active:
+        recorder.end()
+        skeleton_saver_2d.save_to_csv()
+        is_recording = False
+        print("Stopped recording")
 
 def to_keypoints_np(obj_points):
     keypoints = np.array(obj_points)
@@ -150,13 +168,12 @@ while not app.need_exit():
     raw_img = cam.read()
     flags = web_server.get_control_flags()
 
-    # Run segmentation for background updates
+    # Run segmentation for background updates and human detection
     objs_seg = segmentor.detect(raw_img, conf_th=0.5, iou_th=0.45)
     current_human_present = any(segmentor.labels[obj.class_id] in ["person", "human"] for obj in objs_seg)
     bg_updated = False
 
     # Background update logic - only if auto_update_bg is enabled
-    print(flags["auto_update_bg"])
     if flags["auto_update_bg"]:
         if prev_human_present and not current_human_present:
             no_human_counter += 1
@@ -197,10 +214,48 @@ while not app.need_exit():
 
     # Pose detection and tracking
     objs = detector.detect(raw_img, conf_th=0.5, iou_th=0.45, keypoint_th=0.5)
+    
+    # Check for human presence from pose detector as well
+    pose_human_present = len(objs) > 0
+    human_present = current_human_present or pose_human_present
+    
+    # Update human presence history (keep last NO_HUMAN_FRAMES_TO_STOP + 1 frames)
+    human_presence_history.append(human_present)
+    if len(human_presence_history) > NO_HUMAN_FRAMES_TO_STOP + 1:
+        human_presence_history.pop(0)
+    
+    # Smart recording logic
+    if flags["record"]:
+        now = time.ticks_ms()
+        
+        # Check if we should start recording
+        if not is_recording:
+            # Start if we have human presence for MIN_HUMAN_FRAMES_TO_START consecutive frames
+            # Or if we just ended a recording and human is still present
+            if (len(human_presence_history) >= MIN_HUMAN_FRAMES_TO_START and 
+                all(human_presence_history[-MIN_HUMAN_FRAMES_TO_START:])):
+                start_new_recording()
+        
+        # Check if we should stop recording
+        if is_recording:
+            # Stop if no human for NO_HUMAN_FRAMES_TO_STOP consecutive frames
+            no_human_count = 0
+            for presence in reversed(human_presence_history):
+                if not presence:
+                    no_human_count += 1
+                else:
+                    break
+            
+            if (no_human_count >= NO_HUMAN_FRAMES_TO_STOP or 
+                now - recording_start_time >= MAX_RECORDING_DURATION_MS):
+                stop_recording()
+    
+    # Process tracking and drawing
     out_bbox = yolo_objs_to_tracker_objs(objs)
     tracks = tracker0.update(out_bbox)
 
-    frame_id += 1
+    if is_recording:
+        frame_id += 1
     
     for track in tracks:
         if track.lost:
@@ -244,35 +299,39 @@ while not app.need_exit():
                     img.draw_string(int(tracker_obj.x), int(tracker_obj.y), msg, color=color, scale=0.5)
                     detector.draw_pose(img, obj.points, 8 if detector.input_width() > 480 else 4, color=color)
                     
-                    skeleton_saver_2d.add_keypoints(frame_id, track.id, obj.points, 1 if track.id in fall_ids else 0)
+                    if is_recording:
+                        skeleton_saver_2d.add_keypoints(frame_id, track.id, obj.points, 1 if track.id in fall_ids else 0)
                     
                     break  # no need to check other objs
 
-    if recorder.is_active:
+    if is_recording:
         recorder.add_frame(img)
+    
+    # Draw recording status on display
+    if is_recording:
+        recording_time = (time.ticks_ms() - recording_start_time) // 1000
+        status_text = f"REC {recording_time}s"
+        img.draw_string(10, 10, status_text, color=image.COLOR_RED, scale=0.5)
+    
     disp.show(img)
     
     web_server.send_frame(img)
 
     flags = web_server.get_control_flags()
-    if flags["record"] and not recorder.is_active:
-        last_rotate_ms = start_new_recording()
-    elif not flags["record"] and recorder.is_active:
-        recorder.end()
+    
+    # Manual recording control from web interface
+    if flags["record"] and not is_recording and not recorder.is_active:
+        # Manual start - check if we should start immediately
+        if human_present:
+            start_new_recording()
+    elif not flags["record"] and is_recording:
+        # Manual stop
+        stop_recording()
 
     if flags["set_background"]:
         web_server.confirm_background(BACKGROUND_PATH)
         web_server.reset_set_background_flag()
 
-    # Rotate recording every 10 seconds
-    now = time.ticks_ms()
-    if now - last_rotate_ms >= record_period and flags["record"] and recorder.is_active:
-        # Save vid recording and skeleton csv
-        recorder.end()
-        skeleton_saver_2d.save_to_csv()
-        
-        # Start new rec
-        last_rotate_ms = start_new_recording()
-
 # Final cleanup
-recorder.end()
+if is_recording:
+    stop_recording()
